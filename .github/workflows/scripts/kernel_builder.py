@@ -443,12 +443,12 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             (
                 self.work_dir / "common/arch/arm64/kernel/vdso/Makefile",
                 "CFLAGS_vgettimeofday.o = -O2 -mcmodel=tiny -fasynchronous-unwind-tables",
-                "CFLAGS_vgettimeofday.o += -include $(srctree)/lib/vdso/gettimeofday.c",
+                "CFLAGS_vgettimeofday.o += -DCONFIG_GENERIC_GETTIMEOFDAY=1 -DCONFIG_HAVE_GENERIC_VDSO=1 -include $(srctree)/lib/vdso/gettimeofday.c",
             ),
             (
                 self.work_dir / "common/arch/arm64/kernel/vdso32/Makefile",
                 "VDSO_CFLAGS_REMOVE_vgettimeofday.o = $(CC_FLAGS_FTRACE) -Os",
-                "VDSO_CFLAGS_gettimeofday_o += -include $(srctree)/lib/vdso/gettimeofday.c",
+                "VDSO_CFLAGS_gettimeofday_o += -DCONFIG_GENERIC_GETTIMEOFDAY=1 -DCONFIG_HAVE_GENERIC_VDSO=1 -include $(srctree)/lib/vdso/gettimeofday.c",
             ),
         ]
 

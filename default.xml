@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <!-- 原有的 AOSP 远程源定义，保留用于其他项目 -->
+  <remote name="aosp" fetch=".." review="https://android-review.googlesource.com/" />
+  
+  <!-- 新增：定义 ESK-Project 的远程源 -->
+  <remote name="esk" fetch="https://github.com/ESK-Project/" />
+
+  <!-- 默认设置，保持不变 -->
+  <default upstream="master-kernel-build-2021" dest-branch="master-kernel-build-2021" remote="aosp" sync-j="4" />
+  
+  <!-- 其他项目保持不变 -->
+  <superproject name="kernel/superproject" remote="aosp" revision="common-android12-5.10-2021-08" />
+  <project path="build" name="kernel/build" revision="8c0966a12f3ab946e6e91ce20e581953d36434c1" />
+  <project path="hikey-modules" name="kernel/hikey-modules" revision="29186c26014764e1ed94548b285b3f020beed758" upstream="android12-5.10" dest-branch="android12-5.10" />
+  
+  <!-- 修改关键：common 项目 -->
+  <!-- path="common": 保持路径名为 common，确保后续编译脚本能找到代码 -->
+  <!-- name="android_kernel_xiaomi_mt6895": 指定 GitHub 上的仓库名 -->
+  <!-- remote="esk": 使用上面定义的新远程源 -->
+  <!-- revision: 请替换为你想拉取的分支名，例如 master, android13, lineage-20 等 -->
+  <project path="common" name="android_kernel_xiaomi_mt6895" remote="esk" revision="16.2-rebase" />
+  
+  <!-- 以下项目保持不变 -->
+  <project path="kernel/tests" name="kernel/tests" revision="c2ea6143e8f1efb9a68cca88159210e16cde1bac" />
+  <project path="kernel/configs" name="kernel/configs" revision="c10b7ea022edc356d37c092d7ca46bcb860f8a90" />
+  <project path="common-modules/virtual-device" name="kernel/common-modules/virtual-device" revision="9cf8d43625dcfd782c149532e385139f1e2aebfc" upstream="android12-5.10" dest-branch="android12-5.10" />
+  <project path="prebuilts-master/clang/host/linux-x86" name="platform/prebuilts/clang/host/linux-x86" clone-depth="1" revision="6e3223f76384455acde43affde3df0ea9df66c0d" />
+  <project path="prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8" name="platform/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8" clone-depth="1" revision="4e6f66acf138d40d9a80be24b275abb9c6eed729" />
+  <project path="prebuilts/build-tools" name="platform/prebuilts/build-tools" clone-depth="1" revision="cfedc16ec3deb680fca6fe2aff44a1837a97b50d" />
+  <project path="prebuilts/kernel-build-tools" name="kernel/prebuilts/build-tools" clone-depth="1" revision="a5fcf02304b51f43d2c8bfd587e26755e3ce2701" />
+  <project path="tools/mkbootimg" name="platform/system/tools/mkbootimg" revision="34bc8bfb493401f7aadbd3b434f9fbfa521e9301" />
+</manifest>

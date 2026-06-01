@@ -58,11 +58,23 @@ class ShellCommand:
 
 
 class KernelBuilder:
+    XIAOMI_MT6895_MANIFEST_BRANCH = "common-android12-5.10-2021-08"
+    XIAOMI_MT6895_BUILD_CONFIG = "common/build.config.xiaomi.xaga"
+    XIAOMI_MT6895_LOCAL_MANIFEST = """<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <remote name="esk" fetch="https://github.com/ESK-Project/" />
+  <remove-project name="kernel/common" />
+  <project path="common" name="android_kernel_xiaomi_mt6895" remote="esk" revision="16.2-rebase" />
+</manifest>
+"""
+
     KERNEL_CONFIG_TEMPLATE = """
 # === KernelSU Config ===
 CONFIG_KSU=y
 CONFIG_KPM=y
 CONFIG_KSU_SUSFS_SUS_SU=n
+CONFIG_KEYS=y
+CONFIG_ASSOCIATIVE_ARRAY=y
 
 # === TMPFS Config ===
 CONFIG_TMPFS_XATTR=y
@@ -190,29 +202,24 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
     def init_and_sync_kernel(self):
         logger.info("=== 初始化和同步内核源代码 ===")
         self._chdir(self.work_dir)
-        formatted_branch = self.config.formatted_branch
-
+        manifest_branch = self.XIAOMI_MT6895_MANIFEST_BRANCH
         self._run_cmd(f"$REPO init --depth=1 --u https://android.googlesource.com/kernel/manifest "
-                     f"-b common-{formatted_branch} --repo-rev=v2.16", check=False)
+                     f"-b {manifest_branch} --repo-rev=v2.16", check=False)
 
-        remote = subprocess.run(f"git ls-remote https://android.googlesource.com/kernel/common {formatted_branch}",
-                               shell=True, capture_output=True, text=True).stdout.strip()
-        if "deprecated" in remote:
-            manifest_path = self.work_dir / ".repo/manifests/default.xml"
-            with open(manifest_path, "r") as f:
-                content = f.read()
-            content = content.replace(f'"{formatted_branch}"', f'"deprecated/{formatted_branch}"')
-            with open(manifest_path, "w") as f:
-                f.write(content)
+        local_manifests_dir = self.work_dir / ".repo/local_manifests"
+        local_manifests_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = local_manifests_dir / "xiaomi_mt6895.xml"
+        with open(manifest_path, "w") as f:
+            f.write(self.XIAOMI_MT6895_LOCAL_MANIFEST)
 
+        remote = "ESK-Project/android_kernel_xiaomi_mt6895:16.2-rebase"
         self.env["REMOTE_BRANCH"] = remote
-        logger.info("同步内核源代码...")
+        logger.info("同步 Xiaomi MT6895 内核源代码...")
         self._run_cmd("$REPO --trace sync -c -j$(nproc --all) --no-tags --fail-fast", check=False)
 
         common_dir = self.work_dir / "common"
         if not common_dir.exists():
             raise RuntimeError("repo sync 失败，common 目录不存在")
-        self._apply_legacy_fixes(remote)
         logger.info("=== 内核源代码同步完成 ===")
 
     def _apply_legacy_fixes(self, remote_branch: str = ""):
@@ -364,6 +371,37 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             with open(base_c, "w") as f:
                 f.write(content)
 
+    def _append_unique_configs(self, config_file: Path, configs: list):
+        if not config_file.exists():
+            return
+
+        with open(config_file, "r") as f:
+            lines = f.read().splitlines()
+
+        symbols = [cfg.split("=", 1)[0] for cfg in configs]
+        filtered = [
+            line for line in lines
+            if not any(line == f"# {symbol} is not set" or line.startswith(f"{symbol}=") for symbol in symbols)
+        ]
+        filtered.extend(configs)
+
+        with open(config_file, "w") as f:
+            f.write("\n".join(filtered) + "\n")
+
+    def _ensure_keyring_configs(self):
+        common_dir = self.work_dir / "common"
+        required_configs = [
+            "CONFIG_KEYS=y",
+            "CONFIG_ASSOCIATIVE_ARRAY=y",
+        ]
+
+        for config_file in [
+            common_dir / "arch/arm64/configs/gki_defconfig",
+            common_dir / "arch/arm64/configs/vendor/xiaomi_mt6895.config",
+            common_dir / "arch/arm64/configs/vendor/xaga.config",
+        ]:
+            self._append_unique_configs(config_file, required_configs)
+
     def configure_kernel(self):
         logger.info("=== 配置内核 ===")
         self._chdir(self.work_dir)
@@ -378,6 +416,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 f.write("CONFIG_KSU_SUSFS_SUS_PATH=y\n")
             else:
                 f.write("CONFIG_KSU_SUSFS_SUS_PATH=n\n")
+        self._ensure_keyring_configs()
 
         if self.config.use_zram:
             self._configure_zram()
@@ -394,6 +433,23 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             content = content.replace("check_defconfig", "")
             with open(build_config, "w") as f:
                 f.write(content)
+
+        xiaomi_build_config = self.work_dir / "common/build.config.xiaomi.common"
+        if xiaomi_build_config.exists():
+            with open(xiaomi_build_config, "r") as f:
+                content = f.read()
+            if "-e KEYS -e ASSOCIATIVE_ARRAY" not in content:
+                config_path = "${ROOT_DIR}/${KERNEL_DIR}/arch/arm64/configs/${DEFCONFIG}"
+                force_keys = (
+                    " && ${ROOT_DIR}/${KERNEL_DIR}/scripts/config --file "
+                    f"{config_path} -e KEYS -e ASSOCIATIVE_ARRAY"
+                )
+                content = content.replace(
+                    'arch/arm64/configs/${DEVICE_DEFCONFIG}"',
+                    f'arch/arm64/configs/${{DEVICE_DEFCONFIG}}{force_keys}"',
+                )
+                with open(xiaomi_build_config, "w") as f:
+                    f.write(content)
 
     def _configure_zram(self):
         config_file = self.work_dir / "common/arch/arm64/configs/gki_defconfig"
@@ -531,6 +587,8 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         key_configs = {
             "CONFIG_KSU": "KernelSU",
             "CONFIG_KPM": "KPM",
+            "CONFIG_KEYS": "Keys",
+            "CONFIG_ASSOCIATIVE_ARRAY": "Assoc Array",
             "CONFIG_KSU_SUSFS": "SUSFS",
             "CONFIG_BBG": "Baseband-guard",
             "CONFIG_BBR": "BBR",
@@ -571,11 +629,10 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             lines = [l for l in content.split('\n') if 'MODULES_ORDER=android/gki_aarch64_modules' not in l and 'KMI_SYMBOL_LIST_STRICT_MODE' not in l]
             with open(build_config, "w") as f:
                 f.write('\n'.join(lines))
-
         try:
             if (self.work_dir / "build/build.sh").exists():
                 logger.info("使用旧版构建方式...")
-                result = self._run_cmd("LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC=\"/usr/bin/ccache clang\"", check=False)
+                result = self._run_cmd(f"LTO=thin BUILD_CONFIG={self.XIAOMI_MT6895_BUILD_CONFIG} build/build.sh CC=\"/usr/bin/ccache clang\"", check=False)
             else:
                 logger.info("使用 Bazel 构建方式...")
                 result = self._run_cmd("tools/bazel build --disk_cache=/home/runner/.cache/bazel --config=fast --lto=thin //common:kernel_aarch64_dist", check=False)
@@ -619,7 +676,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         else:
             image_source = self.work_dir / "bazel-bin/common/kernel_aarch64"
 
-        for image_name in ["Image", "Image.lz4"]:
+        for image_name in ["Image", "Image.gz", "Image.lz4"]:
             src = image_source / image_name
             if src.exists():
                 self._run_cmd(f"cp {src} {bootimgs_dir}/ && cp {src} {self.work_dir}/", check=False)
@@ -673,12 +730,18 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         artifacts = []
         ak3_dir = self.anykernel_dir
 
-        for suffix in ["", "-lz4", "-gz"]:
-            image_file = f"Image{suffix}"
+        for image_file, zip_suffix in [
+            ("Image", ""),
+            ("Image.lz4", "-lz4"),
+            ("Image.gz", "-gz"),
+        ]:
+            dist_dir = self.work_dir / f"out/{self.config.android_version}-{self.config.kernel_version}/dist"
             image_path = self.work_dir / image_file
             if not image_path.exists():
+                image_path = dist_dir / image_file
+            if not image_path.exists():
                 continue
-            zip_name = f"{self.config.android_version}-{self.config.kernel_version}.{self.config.sub_level}-{self.config.os_patch_level}-AnyKernel3{suffix}.zip"
+            zip_name = f"{self.config.android_version}-{self.config.kernel_version}.{self.config.sub_level}-{self.config.os_patch_level}-AnyKernel3{zip_suffix}.zip"
             self._run_cmd(f"cp {image_path} {ak3_dir}/", check=False)
             self._chdir(ak3_dir)
             self._run_cmd(f"zip -r ../{zip_name} ./*", check=False)

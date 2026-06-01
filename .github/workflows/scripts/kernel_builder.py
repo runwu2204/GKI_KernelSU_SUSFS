@@ -439,25 +439,33 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             self._append_unique_configs(config_file, required_configs)
 
     def _fix_vdso_gettimeofday_include(self):
-        vdso_makefile = self.work_dir / "common/arch/arm64/kernel/vdso/Makefile"
-        if not vdso_makefile.exists():
-            return
+        fixes = [
+            (
+                self.work_dir / "common/arch/arm64/kernel/vdso/Makefile",
+                "CFLAGS_vgettimeofday.o = -O2 -mcmodel=tiny -fasynchronous-unwind-tables",
+                "CFLAGS_vgettimeofday.o += -include $(srctree)/lib/vdso/gettimeofday.c",
+            ),
+            (
+                self.work_dir / "common/arch/arm64/kernel/vdso32/Makefile",
+                "VDSO_CFLAGS_REMOVE_vgettimeofday.o = $(CC_FLAGS_FTRACE) -Os",
+                "VDSO_CFLAGS_gettimeofday_o += -include $(srctree)/lib/vdso/gettimeofday.c",
+            ),
+        ]
 
-        with open(vdso_makefile, "r") as f:
-            content = f.read()
+        for makefile, anchor, forced_include in fixes:
+            if not makefile.exists():
+                continue
 
-        forced_include = "CFLAGS_vgettimeofday.o += -include $(srctree)/lib/vdso/gettimeofday.c"
-        if forced_include in content:
-            return
+            with open(makefile, "r") as f:
+                content = f.read()
 
-        content = content.replace(
-            "CFLAGS_vgettimeofday.o = -O2 -mcmodel=tiny -fasynchronous-unwind-tables",
-            "CFLAGS_vgettimeofday.o = -O2 -mcmodel=tiny -fasynchronous-unwind-tables\n"
-            f"{forced_include}",
-        )
+            if forced_include in content:
+                continue
 
-        with open(vdso_makefile, "w") as f:
-            f.write(content)
+            content = content.replace(anchor, f"{anchor}\n{forced_include}")
+
+            with open(makefile, "w") as f:
+                f.write(content)
 
     def configure_kernel(self):
         logger.info("=== 配置内核 ===")

@@ -672,7 +672,13 @@ function update_sukisu_config() {
         try:
             if (self.work_dir / "build/build.sh").exists():
                 logger.info("使用旧版构建方式...")
-                result = self._run_cmd(f"LTO=thin BUILD_CONFIG={self.XIAOMI_MT6895_BUILD_CONFIG} build/build.sh CC=\"/usr/bin/ccache clang\"", check=False)
+                extra_cppflags = "-DCONFIG_ASSOCIATIVE_ARRAY=1"
+                result = self._run_cmd(
+                    f"LTO=thin BUILD_CONFIG={self.XIAOMI_MT6895_BUILD_CONFIG} "
+                    f"KCFLAGS=\"{extra_cppflags}\" KCPPFLAGS=\"{extra_cppflags}\" "
+                    "build/build.sh CC=\"/usr/bin/ccache clang\"",
+                    check=False,
+                )
             else:
                 logger.info("使用 Bazel 构建方式...")
                 result = self._run_cmd("tools/bazel build --disk_cache=/home/runner/.cache/bazel --config=fast --lto=thin //common:kernel_aarch64_dist", check=False)

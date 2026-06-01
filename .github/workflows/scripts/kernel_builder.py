@@ -500,33 +500,6 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             with open(build_config, "w") as f:
                 f.write(content)
 
-        xiaomi_build_config = self.work_dir / "common/build.config.xiaomi.common"
-        if xiaomi_build_config.exists():
-            with open(xiaomi_build_config, "r") as f:
-                content = f.read()
-
-            if "update_sukisu_config" not in content:
-                content += r'''
-
-function update_sukisu_config() {
-    ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config \
-        -e KEYS \
-        -e ASSOCIATIVE_ARRAY \
-        -e HAVE_GENERIC_VDSO \
-        -e GENERIC_GETTIMEOFDAY
-    (cd ${OUT_DIR} && make ${CC_LD_ARG} O=${OUT_DIR} olddefconfig)
-}
-'''
-
-            content = re.sub(
-                r'POST_DEFCONFIG_CMDS="[^"]*"',
-                'POST_DEFCONFIG_CMDS="update_sukisu_config && rm ${ROOT_DIR}/${KERNEL_DIR}/arch/arm64/configs/${DEFCONFIG}"',
-                content,
-            )
-
-            with open(xiaomi_build_config, "w") as f:
-                f.write(content)
-
     def _configure_zram(self):
         config_file = self.work_dir / "common/arch/arm64/configs/gki_defconfig"
         with open(config_file, "r") as f:

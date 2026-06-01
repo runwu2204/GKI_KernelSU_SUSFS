@@ -78,6 +78,7 @@ CONFIG_KPM=y
 CONFIG_KSU_SUSFS_SUS_SU=n
 CONFIG_KEYS=y
 CONFIG_ASSOCIATIVE_ARRAY=y
+CONFIG_BINARY_PRINTF=y
 CONFIG_HAVE_GENERIC_VDSO=y
 CONFIG_GENERIC_GETTIMEOFDAY=y
 
@@ -427,6 +428,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         required_configs = [
             "CONFIG_KEYS=y",
             "CONFIG_ASSOCIATIVE_ARRAY=y",
+            "CONFIG_BINARY_PRINTF=y",
             "CONFIG_HAVE_GENERIC_VDSO=y",
             "CONFIG_GENERIC_GETTIMEOFDAY=y",
         ]
@@ -681,7 +683,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         try:
             if (self.work_dir / "build/build.sh").exists():
                 logger.info("使用旧版构建方式...")
-                extra_cppflags = "-DCONFIG_ASSOCIATIVE_ARRAY=1"
+                extra_cppflags = "-DCONFIG_ASSOCIATIVE_ARRAY=1 -DCONFIG_BINARY_PRINTF=1"
                 result = self._run_cmd(
                     f"LTO=thin BUILD_CONFIG={self.XIAOMI_MT6895_BUILD_CONFIG} "
                     f"KCFLAGS=\"{extra_cppflags}\" "

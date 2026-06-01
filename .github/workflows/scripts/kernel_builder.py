@@ -78,6 +78,8 @@ CONFIG_KPM=y
 CONFIG_KSU_SUSFS_SUS_SU=n
 CONFIG_KEYS=y
 CONFIG_ASSOCIATIVE_ARRAY=y
+CONFIG_HAVE_GENERIC_VDSO=y
+CONFIG_GENERIC_GETTIMEOFDAY=y
 
 # === TMPFS Config ===
 CONFIG_TMPFS_XATTR=y
@@ -425,6 +427,8 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         required_configs = [
             "CONFIG_KEYS=y",
             "CONFIG_ASSOCIATIVE_ARRAY=y",
+            "CONFIG_HAVE_GENERIC_VDSO=y",
+            "CONFIG_GENERIC_GETTIMEOFDAY=y",
         ]
 
         for config_file in [
@@ -433,6 +437,27 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             common_dir / "arch/arm64/configs/vendor/xaga.config",
         ]:
             self._append_unique_configs(config_file, required_configs)
+
+    def _fix_vdso_gettimeofday_include(self):
+        vdso_makefile = self.work_dir / "common/arch/arm64/kernel/vdso/Makefile"
+        if not vdso_makefile.exists():
+            return
+
+        with open(vdso_makefile, "r") as f:
+            content = f.read()
+
+        forced_include = "CFLAGS_vgettimeofday.o += -include $(srctree)/lib/vdso/gettimeofday.c"
+        if forced_include in content:
+            return
+
+        content = content.replace(
+            "CFLAGS_vgettimeofday.o = -O2 -mcmodel=tiny -fasynchronous-unwind-tables",
+            "CFLAGS_vgettimeofday.o = -O2 -mcmodel=tiny -fasynchronous-unwind-tables\n"
+            f"{forced_include}",
+        )
+
+        with open(vdso_makefile, "w") as f:
+            f.write(content)
 
     def configure_kernel(self):
         logger.info("=== 配置内核 ===")
@@ -449,6 +474,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             else:
                 f.write("CONFIG_KSU_SUSFS_SUS_PATH=n\n")
         self._ensure_keyring_configs()
+        self._fix_vdso_gettimeofday_include()
 
         if self.config.use_zram:
             self._configure_zram()
@@ -477,7 +503,9 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
 function update_sukisu_config() {
     ${KERNEL_DIR}/scripts/config --file ${OUT_DIR}/.config \
         -e KEYS \
-        -e ASSOCIATIVE_ARRAY
+        -e ASSOCIATIVE_ARRAY \
+        -e HAVE_GENERIC_VDSO \
+        -e GENERIC_GETTIMEOFDAY
     (cd ${OUT_DIR} && make ${CC_LD_ARG} O=${OUT_DIR} olddefconfig)
 }
 '''
@@ -675,7 +703,7 @@ function update_sukisu_config() {
                 extra_cppflags = "-DCONFIG_ASSOCIATIVE_ARRAY=1"
                 result = self._run_cmd(
                     f"LTO=thin BUILD_CONFIG={self.XIAOMI_MT6895_BUILD_CONFIG} "
-                    f"KCFLAGS=\"{extra_cppflags}\" KCPPFLAGS=\"{extra_cppflags}\" "
+                    f"KCFLAGS=\"{extra_cppflags}\" "
                     "build/build.sh CC=\"/usr/bin/ccache clang\"",
                     check=False,
                 )

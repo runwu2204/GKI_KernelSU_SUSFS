@@ -108,18 +108,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Maximize build space
-        uses: AdityaGarg8/remove-unwanted-software@v5
-        with:
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-          remove-docker-images: 'true'
-          remove-large-packages: 'true'
-          remove-swapfile: 'true'
-          verbose: 'true'
-
       - name: Checkout code
         uses: actions/checkout@v6
 

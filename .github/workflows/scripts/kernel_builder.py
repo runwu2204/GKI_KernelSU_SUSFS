@@ -2,6 +2,7 @@ import os
 import subprocess
 import logging
 import re
+import shutil
 from pathlib import Path
 from typing import Optional, Callable
 from dataclasses import dataclass, field
@@ -58,6 +59,8 @@ class ShellCommand:
 
 
 class KernelBuilder:
+    XIAOMI_MT6895_REPO_URL = "https://github.com/ESK-Project/android_kernel_xiaomi_mt6895.git"
+    XIAOMI_MT6895_BRANCH = "16.2-rebase"
     XIAOMI_MT6895_MANIFEST_BRANCH = "common-android12-5.10-2021-08"
     XIAOMI_MT6895_BUILD_CONFIG = "common/build.config.xiaomi.xaga"
     XIAOMI_MT6895_LOCAL_MANIFEST = """<?xml version="1.0" encoding="UTF-8"?>
@@ -206,6 +209,11 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         self._run_cmd(f"$REPO init --depth=1 --u https://android.googlesource.com/kernel/manifest "
                      f"-b {manifest_branch} --repo-rev=v2.16", check=False)
 
+        self._remove_path(self.work_dir / "common")
+        self._remove_path(self.work_dir / ".repo/projects/common.git")
+        self._remove_path(self.work_dir / ".repo/project-objects/kernel/common.git")
+        self._remove_path(self.work_dir / ".repo/project-objects/android_kernel_xiaomi_mt6895.git")
+
         local_manifests_dir = self.work_dir / ".repo/local_manifests"
         local_manifests_dir.mkdir(parents=True, exist_ok=True)
         manifest_path = local_manifests_dir / "xiaomi_mt6895.xml"
@@ -220,7 +228,31 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         common_dir = self.work_dir / "common"
         if not common_dir.exists():
             raise RuntimeError("repo sync 失败，common 目录不存在")
+        self._ensure_xiaomi_kernel_source()
         logger.info("=== 内核源代码同步完成 ===")
+
+    def _remove_path(self, path: Path):
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+        elif path.exists():
+            path.unlink()
+
+    def _ensure_xiaomi_kernel_source(self):
+        build_config = self.work_dir / self.XIAOMI_MT6895_BUILD_CONFIG
+        if build_config.exists():
+            return
+
+        logger.warning("repo sync 后未发现 build.config.xiaomi.xaga，改用 git clone 拉取 Xiaomi MT6895 common")
+        common_dir = self.work_dir / "common"
+        self._remove_path(common_dir)
+        self._run_cmd(
+            f"git clone --depth=1 -b {self.XIAOMI_MT6895_BRANCH} "
+            f"{self.XIAOMI_MT6895_REPO_URL} {common_dir}",
+            check=True,
+        )
+
+        if not build_config.exists():
+            raise RuntimeError(f"未找到 {self.XIAOMI_MT6895_BUILD_CONFIG}，Xiaomi MT6895 内核源码未正确同步")
 
     def _apply_legacy_fixes(self, remote_branch: str = ""):
         av, kv = self.config.android_version, self.config.kernel_version

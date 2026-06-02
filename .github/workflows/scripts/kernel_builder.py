@@ -549,6 +549,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             "CONFIG_HAS_IOMEM=y",
             "CONFIG_SWIOTLB=y",
             "CONFIG_DMA_OPS=y",
+            "CONFIG_NEED_SG_DMA_LENGTH=y",
             "CONFIG_ARCH_STACKWALK=y",
             "CONFIG_ARCH_HAS_DMA_PREP_COHERENT=y",
             "CONFIG_ARCH_HAS_SETUP_DMA_OPS=y",
@@ -692,6 +693,45 @@ void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
             with open(dma_mapping, "w") as f:
                 f.write(content)
 
+    def _fix_arm64_dma_noalias_source(self):
+        if self.config.android_version != "android12" or self.config.kernel_version != "5.10":
+            return
+
+        noalias = self.work_dir / "common/arch/arm64/mm/dma-mapping-noalias.c"
+        if not noalias.exists():
+            return
+
+        with open(noalias, "r") as f:
+            content = f.read()
+
+        if "GKI_KernelSU_SUSFS arm64 noalias DMA compatibility" in content:
+            return
+
+        logger.info("=== 应用 arm64 dma-mapping-noalias.c 兼容修复 ===")
+
+        replacements = [
+            ("#include <asm/cacheflush.h>",
+             "#include <asm/cacheflush.h>\n\n/* GKI_KernelSU_SUSFS arm64 noalias DMA compatibility */"),
+            ("sg->dma_length = sg->length;", "sg_dma_len(sg) = sg->length;"),
+            ("tmp->dma_address + tmp->dma_length", "tmp->dma_address + sg_dma_len(tmp)"),
+            ("if (!dev->dma_ops) {", "if (!get_dma_ops(dev)) {"),
+            ("dev->dma_ops = &arm64_noalias_ops;", "set_dma_ops(dev, &arm64_noalias_ops);"),
+            ("dev->dma_ops = &arm64_iommu_ops;", "set_dma_ops(dev, &arm64_iommu_ops);"),
+            ("iommu_dma_ops = dev->dma_ops;", "iommu_dma_ops = get_dma_ops(dev);"),
+        ]
+
+        modified = False
+        for old, new in replacements:
+            if old in content:
+                content = content.replace(old, new)
+                modified = True
+            else:
+                logger.warning("未匹配到 arm64 dma-mapping-noalias.c 兼容替换片段，可能源码已变化")
+
+        if modified:
+            with open(noalias, "w") as f:
+                f.write(content)
+
     def _fix_arm64_mm_init_source(self):
         if self.config.android_version != "android12" or self.config.kernel_version != "5.10":
             return
@@ -772,6 +812,33 @@ void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
         with open(kvm_host, "w") as f:
             f.write(content)
 
+    def _fix_arm64_stacktrace_source(self):
+        if self.config.android_version != "android12" or self.config.kernel_version != "5.10":
+            return
+
+        stacktrace = self.work_dir / "common/arch/arm64/kernel/stacktrace.c"
+        if not stacktrace.exists():
+            return
+
+        with open(stacktrace, "r") as f:
+            content = f.read()
+
+        if "GKI_KernelSU_SUSFS stacktrace_consume_fn compatibility" in content:
+            return
+
+        old = "noinline notrace void arch_stack_walk(stack_trace_consume_fn consume_entry,"
+        new = ("/* GKI_KernelSU_SUSFS stacktrace_consume_fn compatibility */\n"
+               "noinline notrace void arch_stack_walk(bool (*consume_entry)(void *cookie, unsigned long addr),")
+
+        if old not in content:
+            logger.warning("未匹配到 stacktrace.c arch_stack_walk 兼容替换片段，可能源码已变化")
+            return
+
+        logger.info("=== 应用 arm64 stacktrace.c 兼容修复 ===")
+        content = content.replace(old, new, 1)
+        with open(stacktrace, "w") as f:
+            f.write(content)
+
     def configure_kernel(self):
         logger.info("=== 配置内核 ===")
         self._chdir(self.work_dir)
@@ -791,8 +858,10 @@ void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
         self._ensure_arm64_dma_kconfig()
         self._ensure_legacy_arch_configs()
         self._fix_arm64_dma_mapping_source()
+        self._fix_arm64_dma_noalias_source()
         self._fix_arm64_mm_init_source()
         self._fix_kvm_mmio_fields_source()
+        self._fix_arm64_stacktrace_source()
 
         if self.config.use_zram:
             self._configure_zram()

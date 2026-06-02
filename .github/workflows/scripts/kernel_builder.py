@@ -469,6 +469,75 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             with open(makefile, "w") as f:
                 f.write(content)
 
+    def _ensure_kconfig_selects(self, kconfig_file: Path, config_name: str, symbols: list,
+                                force_unconditional: Optional[set] = None):
+        if not kconfig_file.exists():
+            return
+
+        force_unconditional = force_unconditional or set()
+        with open(kconfig_file, "r") as f:
+            lines = f.read().splitlines()
+
+        start = next((i for i, line in enumerate(lines) if line.strip() == f"config {config_name}"), None)
+        if start is None:
+            return
+
+        end = len(lines)
+        for i in range(start + 1, len(lines)):
+            stripped = lines[i].strip()
+            if stripped.startswith("config ") or stripped.startswith("menuconfig "):
+                end = i
+                break
+
+        block = lines[start:end]
+        insert_at = start + 1
+        for i in range(start + 1, end):
+            if lines[i].strip().startswith("select "):
+                insert_at = i + 1
+
+        modified = False
+        for symbol in symbols:
+            pattern = re.compile(rf'^\s*select\s+{re.escape(symbol)}(?:\s|$)')
+            existing_idx = next((start + i for i, line in enumerate(block) if pattern.match(line)), None)
+            if existing_idx is not None:
+                if symbol in force_unconditional and " if " in lines[existing_idx]:
+                    lines[existing_idx] = f"\tselect {symbol}"
+                    modified = True
+                continue
+
+            lines.insert(insert_at, f"\tselect {symbol}")
+            insert_at += 1
+            end += 1
+            modified = True
+
+        if modified:
+            with open(kconfig_file, "w") as f:
+                f.write("\n".join(lines) + "\n")
+
+    def _ensure_arm64_dma_kconfig(self):
+        if self.config.android_version != "android12" or self.config.kernel_version != "5.10":
+            return
+
+        common_dir = self.work_dir / "common"
+        logger.info("=== 检查 arm64 DMA Kconfig 兼容项 ===")
+        self._ensure_kconfig_selects(
+            common_dir / "arch/arm64/Kconfig",
+            "ARM64",
+            [
+                "ARCH_HAS_DMA_PREP_COHERENT",
+                "ARCH_HAS_SETUP_DMA_OPS",
+                "ARCH_HAS_SYNC_DMA_FOR_DEVICE",
+                "ARCH_HAS_SYNC_DMA_FOR_CPU",
+                "ARCH_HAS_TEARDOWN_DMA_OPS",
+            ],
+            force_unconditional={"ARCH_HAS_TEARDOWN_DMA_OPS"},
+        )
+        self._ensure_kconfig_selects(
+            common_dir / "drivers/iommu/Kconfig",
+            "IOMMU_DMA",
+            ["DMA_OPS"],
+        )
+
     def configure_kernel(self):
         logger.info("=== 配置内核 ===")
         self._chdir(self.work_dir)
@@ -485,6 +554,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 f.write("CONFIG_KSU_SUSFS_SUS_PATH=n\n")
         self._ensure_keyring_configs()
         self._fix_vdso_gettimeofday_include()
+        self._ensure_arm64_dma_kconfig()
 
         if self.config.use_zram:
             self._configure_zram()

@@ -550,6 +550,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             "CONFIG_SWIOTLB=y",
             "CONFIG_DMA_OPS=y",
             "CONFIG_NEED_SG_DMA_LENGTH=y",
+            "CONFIG_CRYPTO_LIB_POLY1305_RSIZE=9",
             "CONFIG_ARCH_STACKWALK=y",
             "CONFIG_ARCH_HAS_DMA_PREP_COHERENT=y",
             "CONFIG_ARCH_HAS_SETUP_DMA_OPS=y",
@@ -732,6 +733,37 @@ void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
             with open(noalias, "w") as f:
                 f.write(content)
 
+    def _fix_poly1305_rsize_source(self):
+        if self.config.android_version != "android12" or self.config.kernel_version != "5.10":
+            return
+
+        poly1305 = self.work_dir / "common/include/crypto/poly1305.h"
+        if not poly1305.exists():
+            return
+
+        with open(poly1305, "r") as f:
+            content = f.read()
+
+        if "GKI_KernelSU_SUSFS poly1305 rsize compatibility" in content:
+            return
+
+        anchor = "#define POLY1305_DIGEST_SIZE\t16"
+        fallback = """#define POLY1305_DIGEST_SIZE\t16
+
+/* GKI_KernelSU_SUSFS poly1305 rsize compatibility */
+#ifndef CONFIG_CRYPTO_LIB_POLY1305_RSIZE
+#define CONFIG_CRYPTO_LIB_POLY1305_RSIZE 9
+#endif"""
+
+        if anchor not in content:
+            logger.warning("未匹配到 poly1305.h RSIZE 兼容插入位置，可能源码已变化")
+            return
+
+        logger.info("=== 应用 poly1305.h RSIZE 兼容修复 ===")
+        content = content.replace(anchor, fallback, 1)
+        with open(poly1305, "w") as f:
+            f.write(content)
+
     def _fix_arm64_mm_init_source(self):
         if self.config.android_version != "android12" or self.config.kernel_version != "5.10":
             return
@@ -859,6 +891,7 @@ void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
         self._ensure_legacy_arch_configs()
         self._fix_arm64_dma_mapping_source()
         self._fix_arm64_dma_noalias_source()
+        self._fix_poly1305_rsize_source()
         self._fix_arm64_mm_init_source()
         self._fix_kvm_mmio_fields_source()
         self._fix_arm64_stacktrace_source()

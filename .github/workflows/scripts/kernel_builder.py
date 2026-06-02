@@ -853,6 +853,37 @@ static struct scatterlist *sgl_alloc(unsigned long long length, gfp_t gfp,
         with open(scompress, "w") as f:
             f.write(content)
 
+    def _fix_rpmb_mtk_mmc_host_source(self):
+        if self.config.android_version != "android12" or self.config.kernel_version != "5.10":
+            return
+
+        rpmb_mtk = self.work_dir / "common/drivers/char/rpmb/rpmb-mtk.c"
+        if not rpmb_mtk.exists():
+            return
+
+        with open(rpmb_mtk, "r") as f:
+            content = f.read()
+
+        if "GKI_KernelSU_SUSFS mtk_mmc_host compatibility" in content:
+            return
+
+        old = "\tstruct mmc_host *mmc = mtk_mmc_host[0];"
+        new = """\t/* GKI_KernelSU_SUSFS mtk_mmc_host compatibility */
+#if IS_ENABLED(CONFIG_MMC_MTK_PRO)
+\tstruct mmc_host *mmc = mtk_mmc_host[0];
+#else
+\tstruct mmc_host *mmc = NULL;
+#endif"""
+
+        if old not in content:
+            logger.warning("未匹配到 rpmb-mtk.c mtk_mmc_host 兼容替换片段，可能源码已变化")
+            return
+
+        logger.info("=== 应用 rpmb-mtk.c mtk_mmc_host 兼容修复 ===")
+        content = content.replace(old, new, 1)
+        with open(rpmb_mtk, "w") as f:
+            f.write(content)
+
     def _fix_arm64_mm_init_source(self):
         if self.config.android_version != "android12" or self.config.kernel_version != "5.10":
             return
@@ -982,6 +1013,7 @@ static struct scatterlist *sgl_alloc(unsigned long long length, gfp_t gfp,
         self._fix_arm64_dma_noalias_source()
         self._fix_poly1305_rsize_source()
         self._fix_scompress_sgl_alloc_source()
+        self._fix_rpmb_mtk_mmc_host_source()
         self._fix_arm64_mm_init_source()
         self._fix_kvm_mmio_fields_source()
         self._fix_arm64_stacktrace_source()

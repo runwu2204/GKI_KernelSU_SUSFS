@@ -524,6 +524,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             common_dir / "arch/arm64/Kconfig",
             "ARM64",
             [
+                "ARCH_STACKWALK",
                 "ARCH_HAS_DMA_PREP_COHERENT",
                 "ARCH_HAS_SETUP_DMA_OPS",
                 "ARCH_HAS_SYNC_DMA_FOR_DEVICE",
@@ -537,6 +538,134 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             "IOMMU_DMA",
             ["DMA_OPS"],
         )
+
+    def _fix_arm64_dma_mapping_source(self):
+        if self.config.android_version != "android12" or self.config.kernel_version != "5.10":
+            return
+
+        dma_mapping = self.work_dir / "common/arch/arm64/mm/dma-mapping.c"
+        if not dma_mapping.exists():
+            return
+
+        with open(dma_mapping, "r") as f:
+            content = f.read()
+
+        if "GKI_KernelSU_SUSFS arm64 dma-map-ops compatibility" in content:
+            return
+
+        logger.info("=== 应用 arm64 dma-mapping.c 兼容修复 ===")
+
+        replacements = [
+            (
+                """void arch_sync_dma_for_device(phys_addr_t paddr, size_t size,
+\t\tenum dma_data_direction dir)
+{
+\t__dma_map_area(phys_to_virt(paddr), size, dir);
+}
+""",
+                """#ifdef CONFIG_ARCH_HAS_SYNC_DMA_FOR_DEVICE
+void arch_sync_dma_for_device(phys_addr_t paddr, size_t size,
+\t\tenum dma_data_direction dir)
+{
+\t__dma_map_area(phys_to_virt(paddr), size, dir);
+}
+#endif
+""",
+            ),
+            (
+                """void arch_sync_dma_for_cpu(phys_addr_t paddr, size_t size,
+\t\tenum dma_data_direction dir)
+{
+\t__dma_unmap_area(phys_to_virt(paddr), size, dir);
+}
+""",
+                """#ifdef CONFIG_ARCH_HAS_SYNC_DMA_FOR_CPU
+void arch_sync_dma_for_cpu(phys_addr_t paddr, size_t size,
+\t\tenum dma_data_direction dir)
+{
+\t__dma_unmap_area(phys_to_virt(paddr), size, dir);
+}
+#endif
+""",
+            ),
+            (
+                """void arch_dma_prep_coherent(struct page *page, size_t size)
+{
+\t__dma_flush_area(page_address(page), size);
+}
+""",
+                """#ifdef CONFIG_ARCH_HAS_DMA_PREP_COHERENT
+void arch_dma_prep_coherent(struct page *page, size_t size)
+{
+\t__dma_flush_area(page_address(page), size);
+}
+#endif
+""",
+            ),
+            (
+                """#ifdef CONFIG_IOMMU_DMA
+void arch_teardown_dma_ops(struct device *dev)
+{
+\tdev->dma_ops = NULL;
+}
+#endif
+""",
+                """#ifdef CONFIG_ARCH_HAS_TEARDOWN_DMA_OPS
+void arch_teardown_dma_ops(struct device *dev)
+{
+\tset_dma_ops(dev, NULL);
+}
+#endif
+""",
+            ),
+            (
+                """void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
+\t\t\tconst struct iommu_ops *iommu, bool coherent)
+{""",
+                """#ifdef CONFIG_ARCH_HAS_SETUP_DMA_OPS
+void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
+\t\t\tconst struct iommu_ops *iommu, bool coherent)
+{""",
+            ),
+            (
+                """\tdev->dma_coherent = coherent;""",
+                """#if defined(CONFIG_ARCH_HAS_SYNC_DMA_FOR_DEVICE) || \\
+\tdefined(CONFIG_ARCH_HAS_SYNC_DMA_FOR_CPU) || \\
+\tdefined(CONFIG_ARCH_HAS_SYNC_DMA_FOR_CPU_ALL)
+\tdev->dma_coherent = coherent;
+#endif""",
+            ),
+            (
+                """\tif (xen_initial_domain())
+\t\tdev->dma_ops = &xen_swiotlb_dma_ops;
+#endif
+}
+""",
+                """\tif (xen_initial_domain())
+\t\tset_dma_ops(dev, &xen_swiotlb_dma_ops);
+#endif
+}
+#endif
+""",
+            ),
+        ]
+
+        modified = False
+        for old, new in replacements:
+            if old in content:
+                content = content.replace(old, new, 1)
+                modified = True
+            else:
+                logger.warning("未匹配到 arm64 dma-mapping.c 兼容替换片段，可能源码已变化")
+
+        if modified:
+            content = content.replace(
+                "#include <asm/cacheflush.h>",
+                "#include <asm/cacheflush.h>\n\n/* GKI_KernelSU_SUSFS arm64 dma-map-ops compatibility */",
+                1,
+            )
+            with open(dma_mapping, "w") as f:
+                f.write(content)
 
     def configure_kernel(self):
         logger.info("=== 配置内核 ===")
@@ -555,6 +684,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         self._ensure_keyring_configs()
         self._fix_vdso_gettimeofday_include()
         self._ensure_arm64_dma_kconfig()
+        self._fix_arm64_dma_mapping_source()
 
         if self.config.use_zram:
             self._configure_zram()

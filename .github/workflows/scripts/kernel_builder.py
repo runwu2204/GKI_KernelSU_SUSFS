@@ -776,15 +776,72 @@ void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
         with open(scompress, "r") as f:
             content = f.read()
 
-        if "GKI_KernelSU_SUSFS SGL_ALLOC compatibility" in content:
+        if ("GKI_KernelSU_SUSFS SGL_ALLOC compatibility" in content and
+                "static struct scatterlist *sgl_alloc" in content):
             return
 
-        anchor = "#include <crypto/scatterwalk.h>"
-        fallback = """#include <crypto/scatterwalk.h>
+        old_fallback = """#include <crypto/scatterwalk.h>
 
 /* GKI_KernelSU_SUSFS SGL_ALLOC compatibility */
 #ifndef CONFIG_SGL_ALLOC
 #define CONFIG_SGL_ALLOC 1
+#endif"""
+        if old_fallback in content:
+            content = content.replace(old_fallback, "#include <crypto/scatterwalk.h>", 1)
+
+        anchor = "#include <crypto/scatterwalk.h>"
+        fallback = """#include <crypto/scatterwalk.h>
+#include <linux/gfp.h>
+
+/* GKI_KernelSU_SUSFS SGL_ALLOC compatibility */
+#ifndef CONFIG_SGL_ALLOC
+static void sgl_free(struct scatterlist *sgl)
+{
+\tstruct scatterlist *sg = sgl;
+
+\twhile (sg) {
+\t\tstruct page *page = sg_page(sg);
+
+\t\tif (page)
+\t\t\t__free_page(page);
+\t\tif (sg_is_last(sg))
+\t\t\tbreak;
+\t\tsg = sg_next(sg);
+\t}
+\tkfree(sgl);
+}
+
+static struct scatterlist *sgl_alloc(unsigned long long length, gfp_t gfp,
+\t\t\t\t\t     unsigned int *nent_p)
+{
+\tstruct scatterlist *sgl, *sg;
+\tunsigned int nents, i;
+
+\tif (!length)
+\t\treturn NULL;
+
+\tnents = DIV_ROUND_UP_ULL(length, PAGE_SIZE);
+\tsgl = kmalloc_array(nents, sizeof(*sgl), gfp);
+\tif (!sgl)
+\t\treturn NULL;
+
+\tsg_init_table(sgl, nents);
+\tfor_each_sg(sgl, sg, nents, i) {
+\t\tstruct page *page = alloc_page(gfp);
+\t\tunsigned int len = min_t(unsigned long long, length, PAGE_SIZE);
+
+\t\tif (!page) {
+\t\t\tsgl_free(sgl);
+\t\t\treturn NULL;
+\t\t}
+\t\tsg_set_page(sg, page, len, 0);
+\t\tlength -= len;
+\t}
+
+\tif (nent_p)
+\t\t*nent_p = nents;
+\treturn sgl;
+}
 #endif"""
 
         if anchor not in content:

@@ -864,23 +864,27 @@ static struct scatterlist *sgl_alloc(unsigned long long length, gfp_t gfp,
         with open(rpmb_mtk, "r") as f:
             content = f.read()
 
-        if "GKI_KernelSU_SUSFS mtk_mmc_host compatibility" in content:
+        if ("GKI_KernelSU_SUSFS mtk_mmc_host compatibility" in content and
+                "struct mmc_host *mmc = NULL;" in content):
             return
 
-        old = "\tstruct mmc_host *mmc = mtk_mmc_host[0];"
-        new = """\t/* GKI_KernelSU_SUSFS mtk_mmc_host compatibility */
-#if IS_ENABLED(CONFIG_MMC_MTK_PRO)
-\tstruct mmc_host *mmc = mtk_mmc_host[0];
-#else
-\tstruct mmc_host *mmc = NULL;
-#endif"""
-
-        if old not in content:
+        pattern = re.compile(r'^([ \t]*)struct mmc_host \*mmc = mtk_mmc_host\[0\];$', re.MULTILINE)
+        match = pattern.search(content)
+        if not match:
             logger.warning("未匹配到 rpmb-mtk.c mtk_mmc_host 兼容替换片段，可能源码已变化")
             return
 
+        def repl(m):
+            indent = m.group(1)
+            return f"""{indent}/* GKI_KernelSU_SUSFS mtk_mmc_host compatibility */
+#if IS_ENABLED(CONFIG_MMC_MTK_PRO)
+{indent}struct mmc_host *mmc = mtk_mmc_host[0];
+#else
+{indent}struct mmc_host *mmc = NULL;
+#endif"""
+
         logger.info("=== 应用 rpmb-mtk.c mtk_mmc_host 兼容修复 ===")
-        content = content.replace(old, new, 1)
+        content = pattern.sub(repl, content)
         with open(rpmb_mtk, "w") as f:
             f.write(content)
 

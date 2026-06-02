@@ -550,6 +550,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             "CONFIG_SWIOTLB=y",
             "CONFIG_DMA_OPS=y",
             "CONFIG_NEED_SG_DMA_LENGTH=y",
+            "CONFIG_SGL_ALLOC=y",
             "CONFIG_CRYPTO_LIB_POLY1305_RSIZE=9",
             "CONFIG_ARCH_STACKWALK=y",
             "CONFIG_ARCH_HAS_DMA_PREP_COHERENT=y",
@@ -764,6 +765,37 @@ void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
         with open(poly1305, "w") as f:
             f.write(content)
 
+    def _fix_scompress_sgl_alloc_source(self):
+        if self.config.android_version != "android12" or self.config.kernel_version != "5.10":
+            return
+
+        scompress = self.work_dir / "common/crypto/scompress.c"
+        if not scompress.exists():
+            return
+
+        with open(scompress, "r") as f:
+            content = f.read()
+
+        if "GKI_KernelSU_SUSFS SGL_ALLOC compatibility" in content:
+            return
+
+        anchor = "#include <crypto/scatterwalk.h>"
+        fallback = """#include <crypto/scatterwalk.h>
+
+/* GKI_KernelSU_SUSFS SGL_ALLOC compatibility */
+#ifndef CONFIG_SGL_ALLOC
+#define CONFIG_SGL_ALLOC 1
+#endif"""
+
+        if anchor not in content:
+            logger.warning("未匹配到 scompress.c SGL_ALLOC 兼容插入位置，可能源码已变化")
+            return
+
+        logger.info("=== 应用 scompress.c SGL_ALLOC 兼容修复 ===")
+        content = content.replace(anchor, fallback, 1)
+        with open(scompress, "w") as f:
+            f.write(content)
+
     def _fix_arm64_mm_init_source(self):
         if self.config.android_version != "android12" or self.config.kernel_version != "5.10":
             return
@@ -892,6 +924,7 @@ void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
         self._fix_arm64_dma_mapping_source()
         self._fix_arm64_dma_noalias_source()
         self._fix_poly1305_rsize_source()
+        self._fix_scompress_sgl_alloc_source()
         self._fix_arm64_mm_init_source()
         self._fix_kvm_mmio_fields_source()
         self._fix_arm64_stacktrace_source()

@@ -530,6 +530,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 "ARCH_HAS_SYNC_DMA_FOR_DEVICE",
                 "ARCH_HAS_SYNC_DMA_FOR_CPU",
                 "ARCH_HAS_TEARDOWN_DMA_OPS",
+                "SWIOTLB",
             ],
             force_unconditional={"ARCH_HAS_TEARDOWN_DMA_OPS"},
         )
@@ -538,6 +539,30 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             "IOMMU_DMA",
             ["DMA_OPS"],
         )
+
+    def _ensure_legacy_arch_configs(self):
+        if self.config.android_version != "android12" or self.config.kernel_version != "5.10":
+            return
+
+        common_dir = self.work_dir / "common"
+        required_configs = [
+            "CONFIG_HAS_IOMEM=y",
+            "CONFIG_SWIOTLB=y",
+            "CONFIG_DMA_OPS=y",
+            "CONFIG_ARCH_STACKWALK=y",
+            "CONFIG_ARCH_HAS_DMA_PREP_COHERENT=y",
+            "CONFIG_ARCH_HAS_SETUP_DMA_OPS=y",
+            "CONFIG_ARCH_HAS_SYNC_DMA_FOR_DEVICE=y",
+            "CONFIG_ARCH_HAS_SYNC_DMA_FOR_CPU=y",
+            "CONFIG_ARCH_HAS_TEARDOWN_DMA_OPS=y",
+        ]
+
+        for config_file in [
+            common_dir / "arch/arm64/configs/gki_defconfig",
+            common_dir / "arch/arm64/configs/vendor/xiaomi_mt6895.config",
+            common_dir / "arch/arm64/configs/vendor/xaga.config",
+        ]:
+            self._append_unique_configs(config_file, required_configs)
 
     def _fix_arm64_dma_mapping_source(self):
         if self.config.android_version != "android12" or self.config.kernel_version != "5.10":
@@ -667,6 +692,86 @@ void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
             with open(dma_mapping, "w") as f:
                 f.write(content)
 
+    def _fix_arm64_mm_init_source(self):
+        if self.config.android_version != "android12" or self.config.kernel_version != "5.10":
+            return
+
+        init_c = self.work_dir / "common/arch/arm64/mm/init.c"
+        if not init_c.exists():
+            return
+
+        with open(init_c, "r") as f:
+            content = f.read()
+
+        if "GKI_KernelSU_SUSFS swiotlb_force compatibility" in content:
+            return
+
+        old = """\tif (swiotlb_force == SWIOTLB_FORCE ||
+\t    max_pfn > PFN_DOWN(arm64_dma_phys_limit))
+\t\tswiotlb_init(1);
+\telse
+\t\tswiotlb_force = SWIOTLB_NO_FORCE;
+"""
+        new = """\t/* GKI_KernelSU_SUSFS swiotlb_force compatibility */
+#ifdef CONFIG_SWIOTLB
+\tif (swiotlb_force == SWIOTLB_FORCE ||
+\t    max_pfn > PFN_DOWN(arm64_dma_phys_limit))
+\t\tswiotlb_init(1);
+\telse
+\t\tswiotlb_force = SWIOTLB_NO_FORCE;
+#endif
+"""
+
+        if old not in content:
+            logger.warning("未匹配到 arm64 init.c swiotlb_force 兼容替换片段，可能源码已变化")
+            return
+
+        logger.info("=== 应用 arm64 init.c SWIOTLB 兼容修复 ===")
+        content = content.replace(old, new, 1)
+        with open(init_c, "w") as f:
+            f.write(content)
+
+    def _fix_kvm_mmio_fields_source(self):
+        if self.config.android_version != "android12" or self.config.kernel_version != "5.10":
+            return
+
+        kvm_host = self.work_dir / "common/include/linux/kvm_host.h"
+        if not kvm_host.exists():
+            return
+
+        with open(kvm_host, "r") as f:
+            content = f.read()
+
+        if "GKI_KernelSU_SUSFS KVM MMIO field compatibility" in content:
+            return
+
+        old = """#ifdef CONFIG_HAS_IOMEM
+\tint mmio_needed;
+\tint mmio_read_completed;
+\tint mmio_is_write;
+\tint mmio_cur_fragment;
+\tint mmio_nr_fragments;
+\tstruct kvm_mmio_fragment mmio_fragments[KVM_MAX_MMIO_FRAGMENTS];
+#endif
+"""
+        new = """/* GKI_KernelSU_SUSFS KVM MMIO field compatibility */
+\tint mmio_needed;
+\tint mmio_read_completed;
+\tint mmio_is_write;
+\tint mmio_cur_fragment;
+\tint mmio_nr_fragments;
+\tstruct kvm_mmio_fragment mmio_fragments[KVM_MAX_MMIO_FRAGMENTS];
+"""
+
+        if old not in content:
+            logger.warning("未匹配到 kvm_host.h MMIO 字段兼容替换片段，可能源码已变化")
+            return
+
+        logger.info("=== 应用 kvm_host.h MMIO 字段兼容修复 ===")
+        content = content.replace(old, new, 1)
+        with open(kvm_host, "w") as f:
+            f.write(content)
+
     def configure_kernel(self):
         logger.info("=== 配置内核 ===")
         self._chdir(self.work_dir)
@@ -684,7 +789,10 @@ void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
         self._ensure_keyring_configs()
         self._fix_vdso_gettimeofday_include()
         self._ensure_arm64_dma_kconfig()
+        self._ensure_legacy_arch_configs()
         self._fix_arm64_dma_mapping_source()
+        self._fix_arm64_mm_init_source()
+        self._fix_kvm_mmio_fields_source()
 
         if self.config.use_zram:
             self._configure_zram()

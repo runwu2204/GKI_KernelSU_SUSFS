@@ -329,7 +329,6 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 Kconfig_rej=Path("lib/Kconfig.rej")
                 if Kconfig_rej.exists():
                     self._run_cmd(f"cat lib/*.rej", check=False)
-                    print(Kconfig_rej.read())
               
 
     def apply_task_mmu_fixes(self):

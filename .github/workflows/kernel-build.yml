@@ -170,7 +170,7 @@ jobs:
           [ -z "${{ github.event.inputs.susfs_commit }}" ] || ARGS="$ARGS --susfs-commit=${{ github.event.inputs.susfs_commit }}"
           [ -z "${{ github.event.inputs.custom_version }}" ] || ARGS="$ARGS --custom-version=${{ github.event.inputs.custom_version }}"
           [ "${{ github.event.inputs.make_release }}" = "true" ] || ARGS="$ARGS --no-release"
-
+          export KCFLAGS="-Wno-unused-label -Wno-unused-variable"
           python3 build.py $ARGS
 
       - name: Prepare artifacts

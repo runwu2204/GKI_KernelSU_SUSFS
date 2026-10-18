@@ -328,6 +328,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                 self._run_cmd(f"patch -p1 -F 3 < {p}", check=False)
                 Kconfig_rej=Path("lib/Kconfig.rej")
                 if Kconfig_rej.exists():
+                    self._run_cmd(f"cat lib/*.rej", check=False)
                     print(Kconfig_rej.read())
               
 

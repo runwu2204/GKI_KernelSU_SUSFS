@@ -326,6 +326,10 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             p = zram_patch_dir / patch
             if p.exists():
                 self._run_cmd(f"patch -p1 -F 3 < {p}", check=False)
+                Kconfig_rej=Path("lib/Kconfig.rej")
+            if Kconfig_rej.exists():
+                print(Kconfig_rej.read())
+              
 
     def apply_task_mmu_fixes(self):
         logger.info("=== 应用 task_mmu.c 修复 ===")
